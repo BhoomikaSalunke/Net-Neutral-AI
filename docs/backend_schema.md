@@ -1,5 +1,7 @@
 # Net-Neutral-AI — Backend Schema (v3)
 
+Companion to the TRD/PRD. Reflects the persisted-state rule (TRD §3), session identity (TRD §4.2), and per-round disconnect tracking (TRD §4.5 / PRD §5.6).
+
 One refinement made here that wasn't explicit in the TRD: **`round_number` is unique per session, not globally.** The TRD's original note ("`round_number` must be `UNIQUE`") was written before the `sessions` table existed as a concept — with multiple sessions over time, round 1 of session A and round 1 of session B are both legitimately "round 1." Uniqueness is enforced as the composite `(session_id, round_number)` instead.
 
 ---
@@ -11,6 +13,7 @@ erDiagram
     SESSIONS ||--o{ ROUNDS : "has"
     SESSIONS ||--o{ ROUND_PARTICIPATION : "tracks"
     SESSIONS ||--o{ CREDITS : "scopes"
+    SESSIONS ||--|| GLOBAL_MODEL_CHECKPOINT : "current model"
     ROUNDS ||--o{ ROUND_PARTICIPATION : "has"
     ROUNDS ||--o{ CREDITS : "earns"
     CLIENTS ||--o{ ROUND_PARTICIPATION : "participates in"
@@ -65,6 +68,14 @@ erDiagram
         float time_seconds
         float points_earned
         timestamp timestamp
+    }
+
+    GLOBAL_MODEL_CHECKPOINT {
+        int id PK
+        uuid session_id FK
+        int round_number
+        bytea weights
+        timestamp updated_at
     }
 ```
 
@@ -143,6 +154,22 @@ CREATE TABLE credits (
     points_earned   FLOAT NOT NULL,
     timestamp       TIMESTAMPTZ NOT NULL DEFAULT now(),
     FOREIGN KEY (session_id, round) REFERENCES rounds(session_id, round_number) ON DELETE CASCADE
+);
+
+-- Holds only the CURRENT aggregated global model per session — one row per
+-- session, overwritten every round (not appended). This is the missing
+-- persistence layer for recovery: sessions.current_round already survives a
+-- coordinator restart, but without this table the actual weights for that
+-- round would still be gone (they'd have lived only on ephemeral disk /
+-- in memory during aggregation). Individual clients' submitted weight
+-- updates are NOT stored here or anywhere else — they're disposable once
+-- FedAvg has folded them into this row.
+CREATE TABLE global_model_checkpoint (
+    id              SERIAL PRIMARY KEY,
+    session_id      UUID NOT NULL UNIQUE REFERENCES sessions(session_id) ON DELETE CASCADE,
+    round_number    INT NOT NULL,
+    weights         BYTEA NOT NULL,
+    updated_at      TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
 -- Indexes for the lookups the coordinator will actually run on every request
