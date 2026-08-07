@@ -46,6 +46,7 @@ Anyone with the coordinator's URL who wants to watch training progress — not a
 - Operator starts a session from the dashboard.
 - Clients discover and join an active session (or wait, correctly, if no session is active — this is the direct fix for the v2 bug where clients would train regardless of session state.
 - Session proceeds through configured rounds; each round: shard/weight distribution → local training → submission → aggregation → evaluation → next round or completion.
+- A coordinator restart mid-session does not require retraining from round 0 — the most recent aggregated global model persists and training resumes from it.
 
 ### 5.2 Data Sharding
 - Coordinator splits the uploaded training dataset into shards, one per client, at session start.
